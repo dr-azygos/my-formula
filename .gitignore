@@ -1,0 +1,5 @@
+analytics_token.txt
+cache/
+output/
+__pycache__/
+screener_xlsx/
