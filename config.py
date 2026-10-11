@@ -111,6 +111,7 @@ Q3_CAP, Q4_CAP = 2.0, 1.0
 V1_MIN_PEERS = 10
 WINSOR = (0.05, 0.95)
 FUND_STALE_DAYS = 150              # warn if a screener export is older than this
+TT_STALE_DAYS = 40                 # warn if inputs/fundamentals_tickertape.csv is older (refreshed monthly)
 
 # ---------------------------------------------------------------- Step 2d / 3
 W_NORMAL = {"QUAL": 0.40, "MOM": 0.40, "VAL": 0.20}

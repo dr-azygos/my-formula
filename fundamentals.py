@@ -107,8 +107,75 @@ def _div(a, b):
     return np.nan if (b is None or not np.isfinite(b) or b == 0 or not np.isfinite(a)) else a / b
 
 
+# ------------------------------------------------------------------ Tickertape snapshot (preferred source)
+TT_FILE = os.path.join(C.INPUT_DIR, "fundamentals_tickertape.csv")
+
+
+@lru_cache(maxsize=1)
+def _tt_table():
+    if not os.path.exists(TT_FILE):
+        return None
+    t = pd.read_csv(TT_FILE)
+    t["symbol"] = t["symbol"].astype(str).str.strip().str.upper()
+    return t.drop_duplicates("symbol").set_index("symbol")
+
+
+def source() -> str:
+    t = _tt_table()
+    return f"Tickertape snapshot {t['asof'].iloc[0]} ({len(t)} stocks)" if t is not None else "Screener.in files"
+
+
+def _load_tt(symbol: str) -> dict | None:
+    """Latest-annual ratios from Tickertape (pulled monthly by Claude into inputs/fundamentals_tickertape.csv).
+
+    Same output keys as the Screener loader. Percentages are converted to fractions so both
+    sources share one scale. Money is Rs crore; balTcso is crore shares.
+    """
+    t = _tt_table()
+    if t is None or symbol not in t.index:
+        return None
+    r = t.loc[symbol]
+    v = lambda k: float(r[k]) if k in r and pd.notna(r[k]) else np.nan
+    tota, rev, ni = v("balTota"), v("incTrev"), v("incNinc")
+    if not (tota > 50) or not np.isfinite(ni):            # new listings / spin-offs with no real accounts yet
+        return None
+    ebit, dep = v("incPbi"), v("incDep")
+    ebitda = ebit + (dep if np.isfinite(dep) else 0)
+    debt, cash, cfo, payout = v("balTdeb"), v("balCsti"), v("cafCfoa"), v("incPyr")
+    debt0 = debt if np.isfinite(debt) else 0.0
+    q1 = _div(rev - v("balCogs"), tota) if np.isfinite(v("balCogs")) else np.nan
+    q3 = NEG_INF if not (ni > 0) else min(C.Q3_CAP, _div(cfo, ni))
+    q4 = NEG_INF if not (ni > 0) else min(C.Q4_CAP, payout if np.isfinite(payout) else 0.0)
+    nd = debt0 - (cash if np.isfinite(cash) else 0)
+    q5 = POS_INF if nd <= 0 else (NEG_INF if not (ebitda > 0) else -nd / ebitda)
+    pct = lambda k: v(k) / 100 if np.isfinite(v(k)) else np.nan
+    roe3 = pct("5Yroe") if np.isfinite(v("5Yroe")) else pct("roe")
+    roa3 = pct("5YrtnAsts") if np.isfinite(v("5YrtnAsts")) else pct("rtnAsts")
+    fs = v("pitroskif")
+    age = (pd.Timestamp.now() - pd.Timestamp(str(r.get("asof")))).days if "asof" in r else 0
+    return {
+        "symbol": symbol, "source": "tickertape", "file_age_days": float(age), "last_fy": "",
+        "shares": v("balTcso") * 1e7 if np.isfinite(v("balTcso")) else np.nan,
+        "q1": q1, "q2": pct("roce"), "q3": q3, "q4": q4, "q5": q5,
+        "roa3": roa3, "roe3": roe3, "payout": q4,
+        "neg_roe_sd5": np.nan,                             # not in Tickertape: Q3 for "other financials" drops out
+        "fscore": fs if np.isfinite(fs) else np.nan, "fscore_n": 9 if np.isfinite(fs) else 0,
+        "pledge": v("promShrPled"),
+        "equity": v("balTeq"), "borrow": debt0, "cash": cash if np.isfinite(cash) else 0.0,
+        "sales_ttm": rev, "ebitda_ttm": ebitda, "ebit_ttm": ebit, "np_ttm": ni,
+        "ebitda_5y": np.nan, "roce": pct("roce"), "roce5": pct("5Yaroi"),
+        "cfo": cfo, "capex": v("cafCexp"),
+    }
+
+
 @lru_cache(maxsize=None)
 def load(symbol: str) -> dict | None:
+    """Tickertape snapshot first; Screener.in Excel file as fallback."""
+    f = _load_tt(symbol)
+    return f if f is not None else _load_screener(symbol)
+
+
+def _load_screener(symbol: str) -> dict | None:
     path = os.path.join(C.SCREENER_XLSX_DIR, f"{symbol}.xlsx")
     if not os.path.exists(path):
         return None
@@ -205,7 +272,7 @@ def load(symbol: str) -> dict | None:
     sales_ttm, op_ttm = _ttm(q, "Sales"), _ttm(q, "Operating Profit")
     dep_ttm, np_ttm = _ttm(q, "Depreciation"), _ttm(q, "Net profit")
     return {
-        "symbol": symbol,
+        "symbol": symbol, "source": "screener", "pledge": np.nan,
         "file_age_days": (time.time() - os.path.getmtime(path)) / 86400,
         "last_fy": last.date().isoformat(),
         "shares": shares,

@@ -312,9 +312,9 @@ class Screener:
         L["has_fund"] = L["symbol"].map(lambda s: fund[s] is not None)
         for s, f in fund.items():
             if f is None:
-                self.issue(s, "screener_xlsx file missing or stale - re-run screener_downloader.py")
-            elif f["file_age_days"] > C.FUND_STALE_DAYS:
-                self.issue(s, f"screener file {f['file_age_days']:.0f} days old")
+                self.issue(s, "no fundamentals: not in Tickertape snapshot and no Screener file (new listing?)")
+            elif f["file_age_days"] > (C.TT_STALE_DAYS if f.get("source") == "tickertape" else C.FUND_STALE_DAYS):
+                self.issue(s, f"{f.get('source', 'fundamentals')} data {f['file_age_days']:.0f} days old")
         fm = fin_m.set_index("symbol") if len(fin_m) else pd.DataFrame()
         pl = pledge.set_index("symbol") if len(pledge) else pd.DataFrame()
 
@@ -351,7 +351,9 @@ class Screener:
                 L[c] = Q[c]
         L["fscore"] = [fund[s]["fscore"] if fund[s] else np.nan for s in L.index]
         L["fscore_n"] = [fund[s]["fscore_n"] if fund[s] else np.nan for s in L.index]
-        L["pledge"] = [pl.loc[s, "pledge_pct"] if s in pl.index else np.nan for s in L.index]
+        L["pledge"] = [pl.loc[s, "pledge_pct"] if s in pl.index
+                       else (fund[s].get("pledge", np.nan) if fund[s] else np.nan) for s in L.index]
+        L["fund_src"] = [fund[s].get("source", "") if fund[s] else "" for s in L.index]
 
         # valuation, ranked within each valuation model inside the peer group
         vrows = {}
