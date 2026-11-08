@@ -126,6 +126,9 @@ STOCK_TRIM = 0.12
 SIZING = "score"
 WEIGHT_MIN_X = 0.50
 WEIGHT_MAX_X = 1.44
+# Shares to buy: the smallest capital is the one where every stock is within this much of its target weight.
+# 20% (not 10%) lets the cheapest order start at 1 share of a pricey stock with weights still sensible.
+SHARES_TOL = 0.20
 SELL_BUFFER_TOP = 5
 VOL_LOOKBACK_DAYS = 126
 # Set this from the build-period backtest (expanding-window rule), then freeze it.
