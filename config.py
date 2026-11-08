@@ -120,6 +120,12 @@ N_SLOTS = 12
 MAX_PER_SECTOR = 3
 MAX_PER_SMALL_SECTOR = 2
 STOCK_TRIM = 0.12
+# Position sizing: "score" = higher StockScore gets a bigger weight (proportional to score),
+# kept between WEIGHT_MIN_X and WEIGHT_MAX_X times the equal weight (8.33% -> 4.17% .. 12%).
+# "equal" = every pick 8.33%. The stocks' total stays N x 8.33%; the ETF share does not change.
+SIZING = "score"
+WEIGHT_MIN_X = 0.50
+WEIGHT_MAX_X = 1.44
 SELL_BUFFER_TOP = 5
 VOL_LOOKBACK_DAYS = 126
 # Set this from the build-period backtest (expanding-window rule), then freeze it.
