@@ -589,16 +589,27 @@ def score_weights(scores, total: float, lo_x: float = None, hi_x: float = None, 
     lo, hi = lo_x * eq, hi_x * eq
     w = np.full(n, np.nan)
     free = np.ones(n, bool)
-    for _ in range(n + 1):
+    for _ in range(2 * n + 2):
         rest = total - np.nansum(np.where(free, 0, w))
         w[free] = rest * sc[free] / sc[free].sum()
         over, under = free & (w > hi + 1e-12), free & (w < lo - 1e-12)
-        if not over.any() and not under.any():
+        # One side at a time: capping the big ones frees weight for the others, which may lift them above the
+        # floor. Pinning both sides in one pass lost weight (90/10/10 summed to 20.3% instead of 25%).
+        if over.any():
+            w[over] = hi
+            free &= ~over
+        elif under.any():
+            w[under] = lo
+            free &= ~under
+        else:
             break
-        w[over], w[under] = hi, lo
-        free &= ~(over | under)
         if not free.any():
             break
+    gap = total - w.sum()  # only when every pick ended on a bound: spread it where there is room
+    if abs(gap) > 1e-12:
+        room = (hi - w) if gap > 0 else (w - lo)
+        if room.sum() > 0:
+            w = w + gap * room / room.sum()
     return w
 
 
