@@ -644,17 +644,18 @@ def _stock_rows(P: pd.DataFrame, etf: bool = True):
     return st, st["price"].astype(float).values, w
 
 
-def min_capital(P: pd.DataFrame, tol: float = 0.10, etf: bool = True) -> dict:
+def min_capital(P: pd.DataFrame, tol: float = None, etf: bool = True) -> dict:
     """Smallest capital that buys ALL recommended stocks at their target weights.
 
     Each stock's target = capital x its weight (score-based, see config.SIZING). Shares are whole
-    (nearest share), so a capital "works" when every stock is within `tol` (10%) of its target.
+    (nearest share), so a capital "works" when every stock is within `tol` (config.SHARES_TOL, 20%) of its target.
       minimum   : smallest capital that works (search in small steps)
       always_ok : every capital above this works
       floor     : below this, 1 share of some stock is bigger than its whole target
     etf=True  : free slots are in the NIFTY 50 ETF (any amount), which also takes rounding leftovers.
     etf=False : no ETF - the stocks share 100% of the capital in the same proportions.
     """
+    tol = C.SHARES_TOL if tol is None else tol
     if P is None or P.empty:
         return {}
     st, px, w = _stock_rows(P, etf)
@@ -720,7 +721,7 @@ def order_sheet(P: pd.DataFrame, capital: float, cost_pct: float = 0.0, etf: boo
                          "target_%": round(wt * 100, 2), "target_Rs": round(budget), "qty": int(k),
                          "amount_Rs": round(k * p), "weight_%": round(k * p / capital * 100, 2),
                          "vs_target": f"{dev:+.0%}",
-                         "note": "" if abs(dev) <= 0.10 else "off target: capital too small for these weights"})
+                         "note": "" if abs(dev) <= C.SHARES_TOL else "off target: capital too small for these weights"})
     spent = float(sum(k * p for k, p in zip(q, px))) if len(px) else 0.0
     rest = capital - spent
     free = [r for _, r in P.iterrows() if not str(r.get("slot")).isdigit()]
