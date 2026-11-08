@@ -186,6 +186,34 @@ with tabs[0]:
     show(P, ["slot", "symbol", "sector_index", "StockScore", "QUAL", "MOM", "VAL", "price", "weight_%"])
     if res.get("portfolio_note"):
         st.caption(res["portfolio_note"])
+    st.markdown("**Shares to buy**")
+    m, mn = E.min_capital(P), E.min_capital(P, etf=False)
+    if m:
+        a, b = st.columns(2)
+        a.metric("Min capital WITH ETF", E._rs(m["minimum"]),
+                 help=f"{E._rs(m['slot_lo'])}-{E._rs(m['slot_hi'])} per stock by score, rest in NIFTY 50 ETF. "
+                      f"Always works above {E._rs(m['always_ok'])}.")
+        b.metric("Min capital WITHOUT ETF", E._rs(mn["minimum"]),
+                 help=f"{mn['n_stocks']} stocks, {E._rs(mn['slot_lo'])}-{E._rs(mn['slot_hi'])} each by score, no ETF. "
+                      f"Always works above {E._rs(mn['always_ok'])}.")
+        st.caption(f"Higher StockScore = bigger weight. With ETF: always works above {E._rs(m['always_ok'])}. "
+                   f"Without ETF: always works above {E._rs(mn['always_ok'])}.")
+    etf = st.toggle("Include NIFTY 50 ETF", value=True)
+    cap = st.number_input("Capital to invest (Rs)", min_value=0, step=10000, value=int(E.load_capital()))
+    if cap > 0:
+        if cap != int(E.load_capital()):
+            E.save_capital(cap)
+        mm = m if etf else mn
+        tag = "with ETF" if etf else "without ETF"
+        if mm and cap < mm["floor"]:
+            st.error(f"Too little: one share of {mm['stock']} is more than its slot. Minimum capital {tag} is {E._rs(mm['minimum'])}.")
+        elif mm and cap < mm["minimum"]:
+            st.warning(f"Below the minimum {tag} {E._rs(mm['minimum'])}: some stocks will be well off their target weight.")
+        O = E.order_sheet(P, cap, etf=etf)
+        show(O, ["slot", "symbol", "score", "price", "target_%", "qty", "amount_Rs", "weight_%", "vs_target", "note"])
+        st.caption("Higher StockScore = bigger weight (4.2% to 12% per stock with ETF). Nearest whole share for each stock. " +
+                   ("The NIFTY 50 ETF line takes the rest." if etf else
+                    "No ETF: stock weights scaled up to 100% in the same proportions; the last line is leftover cash."))
 
 with tabs[1]:
     S = res["sectors"].copy()
