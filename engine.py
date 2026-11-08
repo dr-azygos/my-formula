@@ -496,13 +496,15 @@ class Screener:
                              "QUAL": round(r["QUAL"], 1), "MOM": round(r["MOM"], 1), "VAL": round(r["VAL"], 1),
                              "weight": slot, "price": r["price"]})
         P = pd.DataFrame(rows)
+        if len(P):                                     # higher StockScore -> bigger weight (config.SIZING)
+            P["weight"] = score_weights(P["StockScore"].values, slot * len(P))
         n_free = C.N_SLOTS - len(P)
         parking = "Liquid fund" if (reg["bear"] and C.BEAR_BLOCKS_NEW_BUYS) else "NIFTY 50 ETF"
         if n_free > 0:
             P = pd.concat([P, pd.DataFrame([{"slot": "free", "symbol": parking, "company": f"{n_free} unused slots",
                                              "weight": n_free * slot}])], ignore_index=True)
 
-        # vol scaling (doc 3.1): realised vol of the equal-weight picks, last 6 months
+        # vol scaling (doc 3.1): realised vol of the picks (equal-weight proxy), last 6 months
         note = ""
         stocks = [s for s in P["symbol"] if s in self.daily and self.daily[s] is not None]
         if stocks:
@@ -554,6 +556,185 @@ class Screener:
         return pd.DataFrame(out)
 
 
+def load_capital() -> float:
+    """Capital for the order sheet, saved in inputs/capital.txt (0 = not set)."""
+    p = os.path.join(C.INPUT_DIR, "capital.txt")
+    try:
+        return float(open(p, encoding="utf-8").read().strip().replace(",", ""))
+    except Exception:
+        return 0.0
+
+
+def save_capital(x: float):
+    with open(os.path.join(C.INPUT_DIR, "capital.txt"), "w", encoding="utf-8") as f:
+        f.write(f"{float(x):.0f}\n")
+
+
+def _nearest_qty(budget, price):
+    return np.maximum(1, np.round(budget / price))
+
+
+def score_weights(scores, total: float, lo_x: float = None, hi_x: float = None, sizing: str = None) -> np.ndarray:
+    """Split `total` weight among picks in proportion to their scores, each kept between
+    lo_x and hi_x times the equal share (capped weight is handed to the others)."""
+    lo_x = C.WEIGHT_MIN_X if lo_x is None else lo_x
+    hi_x = C.WEIGHT_MAX_X if hi_x is None else hi_x
+    sc = np.maximum(np.nan_to_num(np.asarray(scores, dtype=float), nan=0.0), 1.0)
+    n = len(sc)
+    if n == 0:
+        return sc
+    eq = total / n
+    if (sizing or C.SIZING) != "score" or n == 1:
+        return np.full(n, eq)
+    lo, hi = lo_x * eq, hi_x * eq
+    w = np.full(n, np.nan)
+    free = np.ones(n, bool)
+    for _ in range(n + 1):
+        rest = total - np.nansum(np.where(free, 0, w))
+        w[free] = rest * sc[free] / sc[free].sum()
+        over, under = free & (w > hi + 1e-12), free & (w < lo - 1e-12)
+        if not over.any() and not under.any():
+            break
+        w[over], w[under] = hi, lo
+        free &= ~(over | under)
+        if not free.any():
+            break
+    return w
+
+
+def _alloc(capital: float, px: np.ndarray, w: np.ndarray, etf: bool = True) -> np.ndarray:
+    """Whole shares per stock for target weights w (fractions of capital).
+    Nearest share (at least 1). Without an ETF the shares must fit inside the capital, so the most
+    over-target stock is trimmed one share at a time until they do."""
+    tgt = capital * w
+    q = np.maximum(1, np.round(tgt / px))
+    if not etf:
+        while (q * px).sum() > capital + 1e-6:
+            c = np.where(q > 1)[0]
+            if not len(c):
+                break
+            i = c[np.argmax((q[c] * px[c]) / tgt[c])]
+            q[i] -= 1
+    return q
+
+
+def _stock_rows(P: pd.DataFrame, etf: bool = True):
+    """(rows, prices, target weights) of the recommended stocks. Without an ETF the stock weights
+    are scaled up to add to 100% (same proportions, so higher score still = bigger weight)."""
+    if "price" not in P.columns or "slot" not in P.columns:      # no stock picks (all slots in the ETF)
+        return P.iloc[0:0], np.array([]), np.array([])
+    st = P[P["slot"].astype(str).str.isdigit() & P["price"].notna()]
+    st = st[st["price"].astype(float) > 0]
+    if st.empty:
+        return st, np.array([]), np.array([])
+    w = st["weight_%"].astype(float).values / 100
+    if not etf:
+        w = w / w.sum()
+    return st, st["price"].astype(float).values, w
+
+
+def min_capital(P: pd.DataFrame, tol: float = 0.10, etf: bool = True) -> dict:
+    """Smallest capital that buys ALL recommended stocks at their target weights.
+
+    Each stock's target = capital x its weight (score-based, see config.SIZING). Shares are whole
+    (nearest share), so a capital "works" when every stock is within `tol` (10%) of its target.
+      minimum   : smallest capital that works (search in small steps)
+      always_ok : every capital above this works
+      floor     : below this, 1 share of some stock is bigger than its whole target
+    etf=True  : free slots are in the NIFTY 50 ETF (any amount), which also takes rounding leftovers.
+    etf=False : no ETF - the stocks share 100% of the capital in the same proportions.
+    """
+    if P is None or P.empty:
+        return {}
+    st, px, w = _stock_rows(P, etf)
+    if not len(px):
+        return {}
+    need = px / w                                   # capital at which 1 share = the full target
+    floor = float(need.max())
+    top = floor * 1.5 / tol
+    step = max(10.0, round(top / 3000, -1))
+    caps = np.arange(np.ceil(floor * (1 - tol) / step) * step, top + step, step)
+    good = np.array([np.all(np.abs(_alloc(c, px, w, etf) * px / (c * w) - 1) <= tol) for c in caps])
+    mn = float(caps[good.argmax()]) if good.any() else float(caps[-1])
+    bad = np.where(~good)[0]
+    aok = float(caps[bad[-1] + 1]) if len(bad) and bad[-1] + 1 < len(caps) else mn
+    i = int(need.argmax())
+    return {"minimum": mn, "always_ok": aok, "floor": floor, "tol": tol,
+            "slot_lo": mn * float(w.min()), "slot_hi": mn * float(w.max()), "slot": mn * float(w.mean()),
+            "stock": st["symbol"].iloc[i], "price": float(px[i]), "n_stocks": int(len(px)),
+            "slot_pct": float(w.mean() * 100), "etf": etf}
+
+
+def _rs(x: float) -> str:
+    """Indian-style rupees: 1,23,45,678."""
+    n = int(round(x))
+    s = str(abs(n))
+    if len(s) > 3:
+        head, tail = s[:-3], s[-3:]
+        head = ",".join([head[max(0, i - 2):i] for i in range(len(head), 0, -2)][::-1])
+        s = head + "," + tail
+    return ("-" if n < 0 else "") + "Rs " + s
+
+
+def min_capital_text(P: pd.DataFrame) -> str:
+    m, n = min_capital(P), min_capital(P, etf=False)
+    if not m:
+        return ""
+    per = lambda x: f"{_rs(x['slot_lo'])}-{_rs(x['slot_hi'])}" if x["slot_hi"] - x["slot_lo"] > 50 else _rs(x["slot"])
+    return (f"Minimum capital WITH NIFTY 50 ETF {_rs(m['minimum'])} ({per(m)} per stock by score, rest in ETF; "
+            f"always works above {_rs(m['always_ok'])}).  "
+            f"WITHOUT ETF {_rs(n['minimum'])} ({n['n_stocks']} stocks, {per(n)} each by score; "
+            f"always works above {_rs(n['always_ok'])}).")
+
+
+def order_sheet(P: pd.DataFrame, capital: float, cost_pct: float = 0.0, etf: bool = True) -> pd.DataFrame:
+    """Shares to buy for a given capital (Rs).
+
+    Each pick gets capital x its target weight (higher StockScore = bigger weight), rounded to the
+    NEAREST whole share (at least 1). With the ETF, the NIFTY 50 ETF line takes whatever is left, so
+    the total always equals the capital. Without the ETF the stock weights are scaled up to 100%
+    (same proportions) and the last line is the small cash left over from rounding.
+    """
+    if P is None or P.empty or not capital or capital <= 0:
+        return pd.DataFrame()
+    st, px, w = _stock_rows(P, etf)
+    rows = []
+    if len(px):
+        q = _alloc(capital, px, w, etf)
+        for (_, r), p, wt, k in zip(st.iterrows(), px, w, q):
+            budget = capital * wt
+            dev = k * p / budget - 1
+            rows.append({"slot": r["slot"], "symbol": r["symbol"], "sector": r.get("sector_index", ""),
+                         "score": r.get("StockScore", np.nan), "price": round(float(p), 2),
+                         "target_%": round(wt * 100, 2), "target_Rs": round(budget), "qty": int(k),
+                         "amount_Rs": round(k * p), "weight_%": round(k * p / capital * 100, 2),
+                         "vs_target": f"{dev:+.0%}",
+                         "note": "" if abs(dev) <= 0.10 else "off target: capital too small for these weights"})
+    spent = float(sum(k * p for k, p in zip(q, px))) if len(px) else 0.0
+    rest = capital - spent
+    free = [r for _, r in P.iterrows() if not str(r.get("slot")).isdigit()]
+    if etf:
+        label = free[0]["symbol"] if free else "NIFTY 50 ETF"
+        tw = sum(float(r.get("weight_%", 0) or 0) for r in free)
+        tgt = round(capital * tw / 100)
+        note = ("stocks cost more than the capital - raise capital" if rest < 0 else
+                "buy this amount of a NIFTY 50 ETF (e.g. NIFTYBEES); includes rounding leftover")
+    else:
+        label, tgt, tw = "Cash left", 0, 0.0
+        note = ("stocks cost more than the capital - raise capital" if rest < 0 else
+                "rounding leftover, stays as cash")
+    rows.append({"slot": "free" if etf else "cash", "symbol": label, "sector": "", "score": np.nan, "price": np.nan,
+                 "target_%": round(tw, 2), "target_Rs": tgt, "qty": np.nan, "amount_Rs": round(rest),
+                 "weight_%": round(rest / capital * 100, 2), "vs_target": "", "note": note})
+    O = pd.DataFrame(rows)
+    O.loc[len(O)] = {"slot": "", "symbol": "TOTAL", "sector": "", "score": np.nan, "price": np.nan,
+                     "target_%": 100.0, "target_Rs": round(capital), "qty": np.nan,
+                     "amount_Rs": round(O["amount_Rs"].sum()), "weight_%": 100.0, "vs_target": "", "note": ""}
+    O["qty"] = O["qty"].astype("Int64")
+    O["target_Rs"] = O["target_Rs"].astype("Int64")
+    return O
+
+
 def compare_tf(S_w: pd.DataFrame, S_m: pd.DataFrame) -> pd.DataFrame:
     """Side-by-side weekly vs monthly Step 1, one row per index."""
     cols = ["index", "group", "quadrant", "rs_ratio", "rs_mom", "above_trend", "breadth", "eligible", "selected"]
@@ -592,6 +773,16 @@ def export_excel(res: dict, path: str):
         if len(res.get("rrg_compare", [])):
             res["rrg_compare"].to_excel(xw, sheet_name="RRG weekly vs monthly", index=False)
         res["portfolio"].to_excel(xw, sheet_name="Portfolio", index=False)
+        cap = load_capital()
+        O = order_sheet(res["portfolio"], cap)
+        if len(O):
+            mt = min_capital_text(res["portfolio"])
+            if mt:
+                O.loc[len(O)] = {c: (mt if c == "note" else ("" if O[c].dtype == object else None)) for c in O.columns}
+            O.to_excel(xw, sheet_name=f"Orders Rs {cap:,.0f}"[:31], index=False)
+            O2 = order_sheet(res["portfolio"], cap, etf=False)
+            if len(O2):
+                O2.to_excel(xw, sheet_name=f"Orders no ETF Rs {cap:,.0f}"[:31], index=False)
         if not res["stocks"].empty:
             res["stocks"].to_excel(xw, sheet_name="Step2 Stocks", index=False)
         if not res["holdings"].empty:
