@@ -5,3 +5,4 @@ __pycache__/
 screener_xlsx/
 github_token.txt
 inputs/*.rejected.csv
+inputs/*.part

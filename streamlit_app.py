@@ -39,6 +39,7 @@ except Exception:
 import config as C          # noqa: E402
 import data_upstox as D     # noqa: E402
 import engine as E          # noqa: E402
+import tickertape_sync      # noqa: E402  (newest Tickertape file; here it can only download: no GitHub key online)
 
 LAST = os.path.join(C.OUTPUT_DIR, "last_result.pkl")
 HOLD = os.path.join(C.INPUT_DIR, "holdings.csv")
@@ -138,6 +139,7 @@ st.caption("Monthly RRG sector screen → stock ranking → 12-slot portfolio ·
 c1, c2 = st.columns([1, 2])
 with c1:
     if st.button("▶ Run screen", type="primary", disabled=J.running, width="stretch"):
+        tickertape_sync.start_in_background()  # never slows or stops the screen
         start(J)
         st.rerun()
 with c2:

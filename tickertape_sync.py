@@ -134,8 +134,10 @@ def sync(log=print) -> list[str]:
         if local_bad:  # kept aside, not lost: the scan uses the last good copy meanwhile
             with open(LOCAL.replace(".csv", ".rejected.csv"), "wb") as f:
                 f.write(local)
-        with open(LOCAL, "wb") as f:
+        tmp = LOCAL + ".part"  # written whole, then swapped in: a scan reading it meanwhile never sees half a file
+        with open(tmp, "wb") as f:
             f.write(best)
+        os.replace(tmp, LOCAL)
         done.append(f"this folder updated to {when} (from {where})"
                     + (" - its own file was broken, kept as fundamentals_tickertape.rejected.csv" if local_bad else ""))
     for repo, path, branch in COPIES:
