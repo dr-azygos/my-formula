@@ -211,6 +211,23 @@ with tabs[0]:
             st.warning(f"Below the minimum {tag} {E._rs(mm['minimum'])}: some stocks will be well off their target weight.")
         O = E.order_sheet(P, cap, etf=etf)
         show(O, ["slot", "symbol", "score", "price", "target_%", "qty", "amount_Rs", "weight_%", "vs_target", "note"])
+        try:                                           # PDF report + Kite basket files for this capital
+            import report as RP
+            ts = f"{res['run_at']:%Y-%m-%d_%H%M}"
+            pb, xb = io.BytesIO(), io.BytesIO()
+            RP.export_pdf(res, cap, etf, pb)
+            RP.export_orders_xlsx(res, cap, etf, xb)
+            d1, d2, d3 = st.columns(3)
+            d1.download_button("PDF report", pb.getvalue(), file_name=f"MyFormula_report_{ts}.pdf", width="stretch")
+            d2.download_button("Kite orders (.xlsx)", xb.getvalue(), file_name=f"MyFormula_kite_orders_{ts}.xlsx",
+                               width="stretch")
+            js = RP.basket_json_files(res, cap, etf)
+            if js:
+                name, data = next(iter(js.items()))
+                d3.download_button(f"Kite basket (.json){' x' + str(len(js)) if len(js) > 1 else ''}", data,
+                                   file_name=name.replace(".json", f"_{ts}.json"), width="stretch")
+        except Exception as e:
+            st.caption(f"PDF / Kite export not available: {e}")
         st.caption("Higher StockScore = bigger weight (4.2% to 12% per stock with ETF). Nearest whole share for each stock. " +
                    ("The NIFTY 50 ETF line takes the rest." if etf else
                     "No ETF: stock weights scaled up to 100% in the same proportions; the last line is leftover cash."))
