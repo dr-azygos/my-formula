@@ -230,19 +230,22 @@ def _why_not(r) -> str:
     return "failed " + " and ".join(out) if out else "passed, but sector already has its maximum picks"
 
 
-def _sector_chart(S: pd.DataFrame):
+def _rrg_plot(points: list[dict], title: str, xlabel: str):
+    """RRG scatter with 6-bar tails. points: name, r, m, tr (list), tm (list), hi (bool)."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except Exception:
         return None
-    s = S.dropna(subset=["rs_ratio", "rs_mom"]) if "rs_ratio" in S else pd.DataFrame()
-    if s.empty:
+    pts = [p for p in points if pd.notna(p.get("r")) and pd.notna(p.get("m"))]
+    if not pts:
         return None
-    fig, ax = plt.subplots(figsize=(7, 5.2))
-    lo = min(96, s["rs_ratio"].min() - 1, s["rs_mom"].min() - 1)
-    hi = max(104, s["rs_ratio"].max() + 1, s["rs_mom"].max() + 1)
+    vals = [v for p in pts for v in ([p["r"], p["m"]] + list(p.get("tr") or []) + list(p.get("tm") or []))
+            if pd.notna(v)]
+    span = max(4.0, max(abs(v - 100) for v in vals) + 1.0)
+    lo, hi = 100 - span, 100 + span
+    fig, ax = plt.subplots(figsize=(7, 5.4))
     ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
     for (x0, y0, x1, y1, c) in [(100, 100, hi, hi, "#e3f4ea"), (100, lo, hi, 100, "#fdf1de"),
                                 (lo, lo, 100, 100, "#fbe5e5"), (lo, 100, 100, hi, "#e6eefc")]:
@@ -250,21 +253,56 @@ def _sector_chart(S: pd.DataFrame):
     ax.axhline(100, color="#8a94a6", lw=1); ax.axvline(100, color="#8a94a6", lw=1)
     for lab, x, y in [("Leading", hi, hi), ("Weakening", hi, lo), ("Lagging", lo, lo), ("Improving", lo, hi)]:
         ax.text(x, y, lab, ha="right" if x == hi else "left", va="top" if y == hi else "bottom", fontsize=9,
-                color="#1b2a4a", alpha=0.6, fontweight="bold")
-    for _, r in s.iterrows():
-        sel = bool(r.get("selected"))
-        ax.scatter(r["rs_ratio"], r["rs_mom"], s=70 if sel else 30, color="#2e9e5b" if sel else "#2f6fdb",
-                   edgecolor="white", zorder=3)
-        ax.annotate(str(r["index"]).replace("Nifty ", ""), (r["rs_ratio"], r["rs_mom"]), xytext=(4, 3),
-                    textcoords="offset points", fontsize=7.5, fontweight="bold" if sel else "normal")
-    ax.set_xlabel("RS-Ratio vs NIFTY 50"); ax.set_ylabel("RS-Momentum")
-    ax.set_title("Sector RRG (completed month) - green = selected", fontsize=10, loc="left")
+                color="#1b2a4a", alpha=0.55, fontweight="bold")
+    palette = ["#2e9e5b", "#d64545", "#7b5cc4", "#1f9aa8", "#e8a33d", "#2f6fdb"]
+    k = 0
+    for p in sorted(pts, key=lambda p: p.get("hi", False)):
+        if p.get("hi"):
+            col = palette[k % len(palette)]; k += 1
+            tr, tm = list(p.get("tr") or []), list(p.get("tm") or [])
+            if len(tr) >= 2 and len(tr) == len(tm):
+                ax.plot(tr, tm, "-", color=col, lw=1.6, alpha=0.75, zorder=3)
+                ax.scatter(tr[:-1], tm[:-1], s=12, color=col, alpha=0.6, zorder=3)
+            ax.scatter(p["r"], p["m"], s=80, color=col, edgecolor="white", zorder=4)
+            ax.annotate(p["name"], (p["r"], p["m"]), xytext=(5, 4), textcoords="offset points", fontsize=8.5,
+                        fontweight="bold", color=col)
+        else:
+            ax.scatter(p["r"], p["m"], s=16, color="#8a94a6", alpha=0.7, zorder=2)
+            ax.annotate(p["name"], (p["r"], p["m"]), xytext=(3, 2), textcoords="offset points", fontsize=6.5,
+                        color="#6b7385")
+    ax.set_xlabel(xlabel); ax.set_ylabel("RS-Momentum")
+    ax.set_title(title, fontsize=10, loc="left")
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=170, bbox_inches="tight"); plt.close(fig)
     buf.seek(0)
     return buf
+
+
+def _sector_chart(S: pd.DataFrame):
+    if "rs_ratio" not in S:
+        return None
+    pts = [{"name": str(r["index"]).replace("Nifty ", ""), "r": r.get("rs_ratio"), "m": r.get("rs_mom"),
+            "tr": r.get("trail_ratio") if isinstance(r.get("trail_ratio"), list) else [],
+            "tm": r.get("trail_mom") if isinstance(r.get("trail_mom"), list) else [], "hi": bool(r.get("selected"))}
+           for _, r in S.iterrows() if r.get("group") != "Context"]
+    return _rrg_plot(pts, "Sectors vs NIFTY 50 (completed months; coloured = selected, line = last 6 months)",
+                     "RS-Ratio vs NIFTY 50")
+
+
+def _stock_chart(T: pd.DataFrame, sector: str, picks: set):
+    if T is None or not len(T) or "rs_mom_vs_sector" not in T:
+        return None
+    g = T[(T["sector_index"] == sector) & T.get("liq_ok", pd.Series(True, index=T.index)).fillna(False).astype(bool)]
+    if g.empty:
+        return None
+    pts = [{"name": r["symbol"], "r": r.get("rs_ratio_vs_sector"), "m": r.get("rs_mom_vs_sector"),
+            "tr": r.get("trail_ratio") if isinstance(r.get("trail_ratio"), list) else [],
+            "tm": r.get("trail_mom") if isinstance(r.get("trail_mom"), list) else [], "hi": r["symbol"] in picks}
+           for _, r in g.iterrows()]
+    return _rrg_plot(pts, f"Stocks vs {sector} index (coloured = picked or held, line = last 6 months; grey = other peers)",
+                     f"RS-Ratio vs {sector}")
 
 
 def export_pdf(res: dict, capital: float, etf: bool, path_or_buf) -> None:
@@ -325,7 +363,7 @@ def export_pdf(res: dict, capital: float, etf: bool, path_or_buf) -> None:
     story += [Paragraph("2. Sectors - why these were chosen", h2)]
     ch = _sector_chart(S)
     if ch is not None:
-        story.append(Image(ch, width=W * 0.72, height=W * 0.72 * 5.2 / 7))
+        story.append(Image(ch, width=W * 0.72, height=W * 0.72 * 5.4 / 7))
     rows = []
     for _, r in S.iterrows():
         if r.get("group") == "Context":
@@ -351,7 +389,16 @@ def export_pdf(res: dict, capital: float, etf: bool, path_or_buf) -> None:
                      [0.15, 0.11, 0.09, 0.09, 0.06, 0.08, 0.42], hl))
 
     # 3 picks
-    story += [Paragraph("3. Stocks picked - and why", h2)]
+    from reportlab.platypus import CondPageBreak
+    story += [CondPageBreak(W * 0.62), Paragraph("3. Stocks picked - and why", h2)]
+    held_syms = set(H["symbol"]) if H is not None and len(H) else set()
+    pick_syms = set(picks["symbol"]) if len(picks) else set()
+    extra = sorted(set(H["sector_index"].dropna()) - set(sel["index"])) if H is not None and len(H) else []
+    for sec in list(sel["index"]) + extra:
+        cimg = _stock_chart(T, sec, pick_syms | held_syms)
+        if cimg is not None:
+            story.append(KeepTogether([Paragraph(f"Where each stock sits vs the {esc(sec)} index", body),
+                                       Image(cimg, width=W * 0.72, height=W * 0.72 * 5.4 / 7)]))
     if len(picks):
         rows = []
         for _, p in picks.iterrows():
