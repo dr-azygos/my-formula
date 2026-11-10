@@ -12,7 +12,7 @@ CASH = os.path.dirname(HERE)                                 # ...\Cash
 CACHE_DIR = os.path.join(HERE, "cache")
 OUTPUT_DIR = os.path.join(HERE, "output")
 INPUT_DIR = os.path.join(HERE, "inputs")
-SCREENER_XLSX_DIR = os.path.join(CASH, "screener_xlsx")      # from screener_downloader.py
+SCREENER_XLSX_DIR = os.path.join(CASH, "data", "screener_xlsx")      # from screener_downloader.py
 # cloud copy (streamlit_app.py): screener files sit inside the app folder, or env MF_SCREENER_DIR
 if os.environ.get("MF_SCREENER_DIR"):
     SCREENER_XLSX_DIR = os.environ["MF_SCREENER_DIR"]
@@ -129,6 +129,11 @@ WEIGHT_MAX_X = 1.44
 # Shares to buy: the smallest capital is the one where every stock is within this much of its target weight.
 # 20% (not 10%) lets the cheapest order start at 1 share of a pricey stock with weights still sensible.
 SHARES_TOL = 0.20
+# Kite order export: the NIFTY 50 ETF bought for the free slots, and how orders are written
+ETF_SYMBOL = "NIFTYBEES"
+KITE_PRODUCT = "CNC"               # delivery
+KITE_ORDER_TYPE = "LIMIT"          # LIMIT at the last close (rounded to Rs 0.05); "MARKET" also works
+KITE_BASKET_MAX = 20               # Kite allows up to 20 orders per basket
 SELL_BUFFER_TOP = 5
 VOL_LOOKBACK_DAYS = 126
 # Set this from the build-period backtest (expanding-window rule), then freeze it.
