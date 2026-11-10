@@ -461,16 +461,20 @@ def export_pdf(res: dict, capital: float, etf: bool, path_or_buf) -> None:
 
 
 def export_all(res: dict, capital: float, etf: bool, out_dir: str | None = None) -> list[str]:
-    """Write PDF + Kite xlsx + basket JSON(s) to out_dir (default output/). Returns the paths."""
-    out_dir = out_dir or C.OUTPUT_DIR
+    """PDF -> exports/pdf_reports, Kite .xlsx + basket .json -> exports/kite_orders (or all in out_dir).
+    Returns the paths."""
+    pdf_dir = out_dir or C.EXPORT_PDF_DIR
+    kite_dir = out_dir or C.EXPORT_KITE_DIR
+    for d in (pdf_dir, kite_dir):
+        os.makedirs(d, exist_ok=True)
     ts = f"{res['run_at']:%Y-%m-%d_%H%M}"
-    pdf = os.path.join(out_dir, f"MyFormula_report_{ts}.pdf")
-    xl = os.path.join(out_dir, f"MyFormula_kite_orders_{ts}.xlsx")
+    pdf = os.path.join(pdf_dir, f"MyFormula_report_{ts}.pdf")
+    xl = os.path.join(kite_dir, f"MyFormula_kite_orders_{ts}.xlsx")
     export_pdf(res, capital, etf, pdf)
     export_orders_xlsx(res, capital, etf, xl)
     paths = [pdf, xl]
     for name, data in basket_json_files(res, capital, etf).items():
-        p = os.path.join(out_dir, name.replace(".json", f"_{ts}.json"))
+        p = os.path.join(kite_dir, name.replace(".json", f"_{ts}.json"))
         with open(p, "wb") as f:
             f.write(data)
         paths.append(p)
