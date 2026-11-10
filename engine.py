@@ -37,6 +37,13 @@ VAL_MODELS = {
 
 
 # ------------------------------------------------------------------ small helpers
+def _trail(rr, key: str, n: int = 6) -> list:
+    """Last n completed bars of an RRG series (for the tail drawn on RRG charts)."""
+    if not rr:
+        return []
+    return [round(float(v), 2) for v in rr[key].dropna().iloc[-n:]]
+
+
 def pct(s: pd.Series) -> pd.Series:
     """Percentile rank 0-100 among non-missing values. -inf ranks last, +inf ranks best."""
     s = pd.to_numeric(s, errors="coerce")
@@ -189,6 +196,7 @@ class Screener:
             rows.append({
                 "index": name, "group": group, "quadrant": q,
                 "rs_ratio": round(rr["last_ratio"], 2), "rs_mom": round(rr["last_mom"], 2),
+                "trail_ratio": _trail(rr, "ratio"), "trail_mom": _trail(rr, "mom"),
                 "mom_rising_2bars": R.rising(rr["mom"], 2),
                 "above_trend": bool(above.iloc[-1]) if pd.notna(sma.iloc[-1]) else False,
                 "rrg_ok": rrg_ok, "breadth": np.nan, "eligible": False, "selected": False,
@@ -267,6 +275,8 @@ class Screener:
             rows.append({"symbol": s, "company": p["company"], "model": p["model"], "price": float(c.iloc[-1]),
                          "liq_cr": round(liq, 2), "rrg_vs_sector": rr["quadrant"] if rr else "n/a",
                          "rs_ratio_vs_sector": round(rr["last_ratio"], 2) if rr else np.nan,
+                         "rs_mom_vs_sector": round(rr["last_mom"], 2) if rr else np.nan,
+                         "trail_ratio": _trail(rr, "ratio"), "trail_mom": _trail(rr, "mom"),
                          "live_rrg_vs_sector": rl["quadrant"] if rl else "n/a",
                          "M2": m2, "M3": m3})
         T = pd.DataFrame(rows)
