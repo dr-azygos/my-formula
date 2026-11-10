@@ -12,13 +12,16 @@ CASH = os.path.dirname(HERE)                                 # ...\Cash
 CACHE_DIR = os.path.join(HERE, "cache")
 OUTPUT_DIR = os.path.join(HERE, "output")
 INPUT_DIR = os.path.join(HERE, "inputs")
+EXPORT_DIR = os.path.join(HERE, "exports")                  # "Export PDF + Kite orders" goes here:
+EXPORT_PDF_DIR = os.path.join(EXPORT_DIR, "pdf_reports")      #   PDF reports
+EXPORT_KITE_DIR = os.path.join(EXPORT_DIR, "kite_orders")     #   Kite order spreadsheets + basket .json
 SCREENER_XLSX_DIR = os.path.join(CASH, "data", "screener_xlsx")      # from screener_downloader.py
 # cloud copy (streamlit_app.py): screener files sit inside the app folder, or env MF_SCREENER_DIR
 if os.environ.get("MF_SCREENER_DIR"):
     SCREENER_XLSX_DIR = os.environ["MF_SCREENER_DIR"]
 elif os.path.isdir(os.path.join(HERE, "screener_xlsx")):
     SCREENER_XLSX_DIR = os.path.join(HERE, "screener_xlsx")
-for _d in (CACHE_DIR, OUTPUT_DIR, INPUT_DIR):
+for _d in (CACHE_DIR, OUTPUT_DIR, INPUT_DIR, EXPORT_PDF_DIR, EXPORT_KITE_DIR):
     os.makedirs(_d, exist_ok=True)
 
 # Upstox ANALYTICS token (read-only, valid ~1 year; no daily login).
