@@ -467,6 +467,11 @@ class Screener:
 
         port = self.portfolio(S, tables, chosen, reg, hold)
         hc = self.holdings_check(hold, S, tables)
+        if C.ETF_SYMBOL in imap and C.ETF_SYMBOL not in self.daily:    # price of the ETF, for the Kite order list
+            try:
+                self.get_daily(C.ETF_SYMBOL, imap[C.ETF_SYMBOL], adjust=False)
+            except Exception:
+                self.issue(C.ETF_SYMBOL, "ETF price not available - order list shows the rupee amount only")
         prices = [{"symbol": "NIFTY 50" if k == C.BENCH_NAME else k, "close": float(v["close"].iloc[-1]),
                    "date": v.index[-1].date().isoformat()}
                   for k, v in self.daily.items() if v is not None and len(v)]
